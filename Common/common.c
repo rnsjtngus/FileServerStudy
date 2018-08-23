@@ -13,26 +13,36 @@ void send_header(int client_socket, MsgHeader header) {
 	send(client_socket, &header, sizeof(header), 0);
 }
 
-void recv_header(int client_socket, MsgHeader header) {
-	recv(client_socket, &header, sizeof(header), 0);
+void recv_header(int client_socket, MsgHeader *header) {
+	recv(client_socket, &(*header), sizeof(*header), 0);
 }
 
 void send_put(int client_socket, MsgPUT *msg_put) {
 	
 }
 
-void recv_put(int client_socket, MsgHeader header, MsgPUT *msg_put) {
+void recv_put(int client_socket, MsgHeader header, MsgPUT *msg) {
 	/* 구조체 초기화 */
-	memset(&msg_put, 0, sizeof(msg_put));
-	msg_put->file_name 	= (char *)malloc(sizeof(char) * header.file_name_size);
-	msg_put->owner	 	= (char *)malloc(sizeof(char) * header.owner_size);
-	msg_put->data		= (char *)malloc(sizeof(char) * header.data_size);
-	memcpy(&(msg_put->header), &header, sizeof(MsgHeader));
+	//memset(&msg_put, 0, sizeof(msg_put));
+	printf("fns, os, ds > %zu, %zu, %zu\n", header.file_name_size, header.owner_size, header.data_size);
+
+	printf("init msg put\n");
+	msg = malloc(sizeof(MsgPUT));
+	printf("msg put done\n");
+	msg->file_name 	= (char *)malloc(sizeof(char) * header.file_name_size);
+	printf("file name done\n");
+	msg->owner	 	= (char *)malloc(sizeof(char) * header.owner_size);
+	printf("owner done\n");
+	msg->data		= (char *)malloc(sizeof(char) * header.data_size);
+	printf("data done\n");
+	memcpy(&(msg->header), &header, sizeof(MsgHeader));
 
 	/* 순서대로 recv */
-	recv(client_socket, msg_put->file_name, msg_put->header.file_name_size, 0);
-	recv(client_socket, msg_put->owner , msg_put->header.owner_size, 0);
-	recv(client_socket, msg_put->data, msg_put->header.data_size, 0);
+	recv(client_socket, msg->file_name, msg->header.file_name_size, 0);
+	recv(client_socket, msg->owner ,	msg->header.owner_size, 0);
+	recv(client_socket, msg->data,		msg->header.data_size, 0);
+
+	//printf("RECEVIED : %s, %s, %s\n", msg_put->file_name, msg_put->owner, msg_put->data);
 }
 
 void free_put(MsgPUT *msg_put) {

@@ -6,7 +6,7 @@
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
-#include <math.h>
+//#include <math.h>
 #include "../Common/common.h"
 
 #define REPLY_MSG_SIZE 1024
@@ -19,6 +19,7 @@ void set_client_socket(int *client_socekt, struct sockaddr_in *server_addr);
 void put(int client_socket);
 void reply_put(int client_socket);
 uint32_t get_file_size(char *file_name);
+int cceil(double x);
 
 int 
 main(int argc, char *argv[]) 
@@ -127,7 +128,7 @@ put(int client_socket)
 	}
 
 	file_size = get_file_size(file_name);
-	total_offset = ((double) file_size) / BUFF_SIZE ;
+	total_offset = cceil(((double) file_size) / BUFF_SIZE);
 	
 	memset(&header, 0, sizeof(header));
 	header.file_name_size = strlen(file_name);
@@ -144,17 +145,23 @@ put(int client_socket)
 
 		rest = (rest > BUFF_SIZE) ? rest - BUFF_SIZE : 0;
 
-		msg_put = malloc(sizeof(MsgPUT));
-		msg_put->file_name = malloc(sizeof(char) * header.file_name_size);
-		msg_put->owner = malloc(sizeof(char) * header.owner_size);
-		msg_put->data = malloc(sizeof(char) * header.data_size);
+		msg_put = (MsgPUT *)malloc(sizeof(MsgPUT));
+		msg_put->file_name 	= (char *)malloc(sizeof(char) * header.file_name_size);
+		msg_put->owner 		= (char *)malloc(sizeof(char) * header.owner_size);
+		msg_put->data 		= (char *)malloc(sizeof(char) * header.data_size);
 		
 		memcpy(&(msg_put->header), &header, sizeof(header));
-		memcpy(msg_put->file_name, file_name, strlen(file_name));
-		read(fd, msg_put->data, header.data_size);
+		memcpy(msg_put->file_name, file_name, sizeof(char) * header.file_name_size);
+		read(fd, msg_put->data, sizeof(char) * header.data_size);
+
+		//printf("(fns, os, ds) > (%zu, %zu, %zu)\n", (msg_put->header).file_name_size, 
+		//		(msg_put->header).owner_size, (msg_put->header).data_size);
+		//printf("file name, owner_name, data > %s, %s, %s\n", msg_put->file_name, msg_put->owner, msg_put->data); 
+		printf("BBB%sAAA\nAAA\n", msg_put->data);
 
 		send(client_socket, &(msg_put->header), sizeof(header), 0);
 		send(client_socket, msg_put->file_name, header.file_name_size, 0);
+		send(client_socket, msg_put->owner, header.owner_size, 0);
 		send(client_socket, msg_put->data, header.data_size, 0);
 
 		free(msg_put->file_name);
@@ -181,3 +188,11 @@ get_file_size(char *file_name)
 	return size;
 }
 
+int 
+cceil(double x) 
+{
+	if((x - (int) x) > 0.0) {
+		return (int)x + 1;
+	}
+	return (int)x;
+}

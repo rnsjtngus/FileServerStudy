@@ -14,7 +14,7 @@
 #define SAVE_DIR "./Files/"
 
 void set_server_socket(int *server_socket, struct sockaddr_in *server_addr);
-void put(int client_socket, MsgHeader header);
+void put(int client_socket, MsgHeader h);
 void reply_put();
 
 int main(char *args, char *argv[]) {
@@ -30,7 +30,7 @@ int main(char *args, char *argv[]) {
 	struct dirent *dir; /* include inode, offset, length, file_name */
 
 	MsgHeader 		header;
-	MsgPUT 			msg_put;
+	//MsgPUT 			msg_put;
 	MsgGET 			msg_get;
 	MsgLIST 		msg_list;
 	MsgPUTREPLY 	msg_put_reply;
@@ -55,7 +55,9 @@ int main(char *args, char *argv[]) {
 		}
 		
 		/* recv request header */
-		recv_header(client_socket, header);
+		recv_header(client_socket, &header);
+		//printf("First header : %zu, %zu, %zu\n", header.file_name_size, header.owner_size,
+		//		header.data_size);
 
 		switch(header.msg_type) {
 			case PUT:
@@ -148,24 +150,38 @@ void set_server_socket(int *server_socket, struct sockaddr_in *server_addr) {
 	printf("Start to Listen\n");
 }
 
-void put(int client_socket, MsgHeader header) {
+void put(int client_socket, MsgHeader h) {
 	/* 변수 선언 */
 	int fd;
 	MsgPUT *msg_put;
 	uint32_t rest;
-	
+	MsgHeader header;
+
+	memcpy(&header, &h, sizeof(header));
+
+	printf("A\n");
 	recv_put(client_socket, header, msg_put);
+	printf("Done recv put\n");
+	printf("RECEIVED : %d, %d\n", sizeof(*msg_put), sizeof(MsgPUT));
+	printf("RECEIVED : %s\n", &(*msg_put).file_name);
+	printf("RECEIVED : %s, %s, %s\n", msg_put->file_name, msg_put->owner, msg_put->data);
 
 	/* start to write file */
+	printf("B\n");
+	printf("%s\n", msg_put->file_name);
 	fd = open(msg_put->file_name, O_WRONLY |O_CREAT);
 
+	printf("C\n");
 	write(fd, msg_put->data, (msg_put->header).data_size);	
 	rest = (msg_put->header).file_size - (msg_put->header).data_size;
 
+	printf("D\n");
 	free_put(msg_put);
 
+	printf("E\n");
 	while(rest > 0) {
-		recv_header(client_socket, header);
+		printf("F\n");
+		recv_header(client_socket, &header);
 		recv_put(client_socket, header, msg_put);
 		write(fd, msg_put->data, (msg_put->header).data_size);
 		rest = rest - (msg_put->header).data_size;
