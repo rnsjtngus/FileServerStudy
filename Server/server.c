@@ -15,9 +15,15 @@
 
 void set_server_socket(int *server_socket, struct sockaddr_in *server_addr);
 void put(int client_socket, MsgHeader h);
-void reply_put();
+void reply_put(int client_socket);
+void get(int clinet_socket, MsgHeader h);
+void reply_get(int client_socket);
+void list(int client_socket);
+void reply_list(int client_socket);
 
-int main(char *args, char *argv[]) {
+int 
+main(char *args, char *argv[]) 
+{
 	/* 변수 선언 */
 	int server_socket;
 	int client_socket;
@@ -53,74 +59,40 @@ int main(char *args, char *argv[]) {
 			printf("Fail to connect with client\n");
 			exit(1);
 		}
-		
-		/* recv request header */
 		recv_header(client_socket, &header);
-		//printf("First header : %zu, %zu, %zu\n", header.file_name_size, header.owner_size,
-		//		header.data_size);
 
 		switch(header.msg_type) {
 			case PUT:
 			{
 				/* read put data and write */
 				put(client_socket, header); 
-				
-				/*
-				recv(client_socket, file_name, recv_h.body_size, 0);
-				printf("Received file name > %s\n", file_name);		
-				file_name[recv_h.body_size] = '\0';
-
-				fdw = open(file_name, O_WRONLY | O_CREAT);
-				printf("File name > %s\n", file_name);
-				int len = (int) recv_h.buff_size;
-				while(len > 0) {
-					printf("Downloading...\n");
-					if(len > BUFF_SIZE) {
-						recv(client_socket, buff_rcv, BUFF_SIZE, 0);
-						write(fdw, buff_rcv, BUFF_SIZE);
-						len = len - BUFF_SIZE;
-					} else {
-						recv(client_socket, buff_rcv, len, 0);
-						write(fdw, buff_rcv, len);
-						len = 0;
-					}
-					printf("Write > %s\n", buff_rcv);
-				}
-				printf("Download Successfully\n");
-				*/
 
 				/* send put_reply */
-				reply_put();
+				reply_put(client_socket);
 
-				/*
-				send_h.body_size = 1;
-				send_h.buff_size = 7;
-				send_h.msg_type = PUT_REPLY;
-
-				send(client_socket, &send_h, sizeof(send_h), 0);
-
-				send(client_socket, "0", 1, 0);
-				send(client_socket, "success", 7, 0);
-		
-				close(client_socket);
-				close(fdw);*/
 				break;
 			}
 			case GET:
+				get(client_socket, header);
+				reply_get(client_socket);
 				break;
 			case LIST:
+				list(client_socket, header);
+				reply_list(client_socket);
 				break;
 			default:
 				printf("Received wrong message.\n");
 				break;
 		}
-		close(server_socket);
+		close(client_socket);
 	}
 	return 0;
 }
 
 /* 서버 소켓 생성 및 설정 */
-void set_server_socket(int *server_socket, struct sockaddr_in *server_addr) {
+void 
+set_server_socket(int *server_socket, struct sockaddr_in *server_addr) 
+{
 	/* create socket */
 	*server_socket = socket(AF_INET, SOCK_STREAM, 0);
 	if(*server_socket == -1) {
@@ -150,47 +122,77 @@ void set_server_socket(int *server_socket, struct sockaddr_in *server_addr) {
 	printf("Start to Listen\n");
 }
 
-void put(int client_socket, MsgHeader h) {
+void 
+put(int client_socket, MsgHeader h) 
+{
 	/* 변수 선언 */
 	int fd;
 	MsgPUT *msg_put;
 	uint32_t rest;
 	MsgHeader header;
 
+	msg_put = malloc(sizeof(MsgPUT));
 	memcpy(&header, &h, sizeof(header));
 
-	printf("A\n");
 	recv_put(client_socket, header, msg_put);
-	printf("Done recv put\n");
-	printf("RECEIVED : %d, %d\n", sizeof(*msg_put), sizeof(MsgPUT));
-	printf("RECEIVED : %s\n", &(*msg_put).file_name);
-	printf("RECEIVED : %s, %s, %s\n", msg_put->file_name, msg_put->owner, msg_put->data);
 
 	/* start to write file */
-	printf("B\n");
 	printf("%s\n", msg_put->file_name);
 	fd = open(msg_put->file_name, O_WRONLY |O_CREAT);
-
-	printf("C\n");
 	write(fd, msg_put->data, (msg_put->header).data_size);	
 	rest = (msg_put->header).file_size - (msg_put->header).data_size;
-
-	printf("D\n");
 	free_put(msg_put);
-
-	printf("E\n");
+	
 	while(rest > 0) {
-		printf("F\n");
+		printf("rest > %zu\n", rest);
+		msg_put = malloc(sizeof(MsgPUT));
 		recv_header(client_socket, &header);
 		recv_put(client_socket, header, msg_put);
 		write(fd, msg_put->data, (msg_put->header).data_size);
 		rest = rest - (msg_put->header).data_size;
 		free_put(msg_put);
 	}
-	printf("DONEDONEDONE\n");
 }
 
-void reply_put() {
+void 
+reply_put(int client_socket) 
+{
+	/* 변수 선언 */
+	MsgPUTREPLY *msg_put_reply;
+	MsgHeader header;
+	
+	msg_put_reply = malloc(sizeof(MsgPUTREPLY));
+	memset(&header, 0, sizeof(MsgHeader));
+	
+	header.msg_type = PUT_REPLY;
+	header.err_code = SUCCESS;
+	memcpy(&(msg_put_reply->header), &header, sizeof(MsgHeader));
+
+	send_put_reply(client_socket, msg_put_reply);
+	free_put_reply(msg_put_reply);
+}
+
+void
+get(int client_socket, MsgHeader header)
+{
+
+}
+
+void
+reply_get(int client_socket) 
+{
+
+}
+
+void 
+list(int client_socket, MsgHeader header)
+{
+
+}
+
+void 
+reply_list(int client_socket)
+{
 
 }
 

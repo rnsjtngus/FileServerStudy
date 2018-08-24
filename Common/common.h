@@ -17,6 +17,7 @@ typedef enum _MsgType {
 
 typedef enum _ErrorCode{
 	NORMAL,
+	SUCCESS,
 }ErrorCode;
 
 typedef struct _MsgHeader {
@@ -67,5 +68,6 @@ typedef struct _MsgLISTREPLY {
 void recv_header(int client_socket, MsgHeader *header);
 void recv_put(int client_socket, MsgHeader header, MsgPUT *msg);
 void free_put(MsgPUT *msg_put);
+
 
 /* 주석은 무조건 이거 */

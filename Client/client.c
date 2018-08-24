@@ -14,10 +14,13 @@
 #define BUFF_SIZE 1024
 #define PORT 7777
 
-
 void set_client_socket(int *client_socekt, struct sockaddr_in *server_addr); 
 void put(int client_socket);
 void reply_put(int client_socket);
+void get(int client_socket);
+void reply_get(int client_socket);
+void list(int client_socket);
+void reply_list(int client_socket);
 uint32_t get_file_size(char *file_name);
 int cceil(double x);
 
@@ -56,9 +59,13 @@ main(int argc, char *argv[])
 				break;
 			
 			case 2: // GET
+				get(client_socket);
+				reply_get(client_socket);
 				break;
 			
 			case 3: // LIST
+				list(client_socket);
+				reply_list(client_socket);
 				break;
 			
 			case 4: // QUIT
@@ -134,6 +141,7 @@ put(int client_socket)
 	header.file_name_size = strlen(file_name);
 	header.owner_size = 0;
 	header.total_offset = total_offset;
+	header.file_size = file_size;
 	//header.curr_offset = 0;
 	//header.data_size = (header.offset == total_offset - 1) ? file_size : BUFF_SIZE;
 	
@@ -154,11 +162,6 @@ put(int client_socket)
 		memcpy(msg_put->file_name, file_name, sizeof(char) * header.file_name_size);
 		read(fd, msg_put->data, sizeof(char) * header.data_size);
 
-		//printf("(fns, os, ds) > (%zu, %zu, %zu)\n", (msg_put->header).file_name_size, 
-		//		(msg_put->header).owner_size, (msg_put->header).data_size);
-		//printf("file name, owner_name, data > %s, %s, %s\n", msg_put->file_name, msg_put->owner, msg_put->data); 
-		printf("BBB%sAAA\nAAA\n", msg_put->data);
-
 		send(client_socket, &(msg_put->header), sizeof(header), 0);
 		send(client_socket, msg_put->file_name, header.file_name_size, 0);
 		send(client_socket, msg_put->owner, header.owner_size, 0);
@@ -176,6 +179,123 @@ put(int client_socket)
 void
 reply_put(int client_socket) 
 {
+	MsgPUTREPY *msg_put_reply;
+	MsgHeader header;
+
+	msg_put_reply = malloc(sizeof(MsgPUTREPLY));
+	memset(&header, 0, sizeof(MsgHeader));
+
+	recv(client_socket, &header, sizeof(Header), 0);
+
+	memset(&(msg_put_reply->header), &header, sizeof(MsgHeader));
+
+	if(msg_put_reply->header.err_code != SUCCESS) {
+		printf("[PUT REPLY] Fail.\n");
+	} else {
+		printf("[PUT REPLY] Success.\n");
+	}
+
+	free(msg_put_reply);
+}
+
+void
+get(int client_socket) 
+{
+	/* 변수 선언 */
+	int file_name_size;
+	
+	char file_name[FILE_NAME_SIZE];
+
+	MsgHeader header;
+	MsgGET *msg_get;
+
+	printf("Enter the file name > ");
+	scanf("%s", file_name);
+	file_name_size = strlen(file_name);
+
+	memset(&header, 0, sizeof(MsgHeader));
+
+	header.msg_type 		= GET;
+	header.file_name_size 	= file_name_size;
+	header.owner_size 		= 0;
+
+	msg_get 			= malloc(sizeof(MsgGET));
+	msg_get->file_name 	= (char *)malloc(sizeof(char) * header.file_name_size);
+	msg_get->owner 		= (char *)malloc(sizeof(char) * header.owner_size);
+	
+	memset(&(msg_get->header), &header, sizeof(MsgHeader));
+	memset(msg_get->file_name, file_name, file_name_size);
+	memset(msg_get->owner, 0, 0);
+
+	send(client_socket, &header, sizeof(MsgHeader));
+	send(client_socket, msg_get->file_name, file_name_size);
+
+	free(msg_get->owner);
+	free(msg_get->file_name);
+	free(msg_get);
+}
+
+void 
+reply_get(int client_socket)
+}
+	/* 변수 선언 */
+	MsgHeader header;
+	MsgGETREPLY *msg_get_reply;
+
+	uint32_t rest;
+	
+	int fd;
+
+	memset(&header, 0, sizeof(MsgHeader));
+	
+	recv(client_socket, &header, sizeof(MsgHeader), 0);
+
+	recv_get_reply(client_socket, header, msg_get_reply);
+
+	fd = open(msg_get_reply->file_name, O_WRONLY | O_CREAT);
+	write(fd, msg_get_reply->data, (msg_get_reply->header).data_size);
+	rest = (msg_get_reply->header).file_size - (msg_get_reply->header).data_size;
+	free_get_reply(msg_get_reply);
+
+	while(rest > 0) {
+		msg_get_reply = malloc(sizeof(MsgGETREPLY));
+		recv(client_socket, &header, sizeof(MsgHeader), 0);
+		recv_get_reply(client_socket, header, msg_put);
+		write(fd, msg_get_reply->data, msg_get_reply->header.data_size);
+		rest = rest - (msg_get_reply->header).data_size;
+		free_get_reply(msg_get_reply);
+	}
+}
+
+void
+list(int client_socket) 
+{
+	/* 변수 선언 */
+	MsgHeader header;
+	MsgLIST *msg_list;
+
+	memset(&header, 0, sizeof(MsgHeader));
+	
+	header.msg_type = LIST;
+	header.owner_size = 0;
+
+	msg_list = malloc(sizeof(MsgLIST));
+	msg_list->owner = (char *)malloc(sizeof(char) * header.owner_size);
+	
+	send(client_socket, &header, sizeof(MsgHeader), 0);
+	
+	free(msg_list->owner);
+	free(msg_list);
+}
+
+void 
+reply_list(int client_socket)
+{
+	/* 변수 선언 */
+	MsgHeader header;
+	MsgLISTREPLY *msg_list_reply;
+
+
 
 }
 

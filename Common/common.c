@@ -10,11 +10,11 @@
 
 // variables and functions
 void send_header(int client_socket, MsgHeader header) {
-	send(client_socket, &header, sizeof(header), 0);
+	send(client_socket, &header, sizeof(MsgHeader), 0);
 }
 
 void recv_header(int client_socket, MsgHeader *header) {
-	recv(client_socket, &(*header), sizeof(*header), 0);
+	recv(client_socket, &(*header), sizeof(MsgHeader), 0);
 }
 
 void send_put(int client_socket, MsgPUT *msg_put) {
@@ -23,26 +23,15 @@ void send_put(int client_socket, MsgPUT *msg_put) {
 
 void recv_put(int client_socket, MsgHeader header, MsgPUT *msg) {
 	/* 구조체 초기화 */
-	//memset(&msg_put, 0, sizeof(msg_put));
-	printf("fns, os, ds > %zu, %zu, %zu\n", header.file_name_size, header.owner_size, header.data_size);
-
-	printf("init msg put\n");
-	msg = malloc(sizeof(MsgPUT));
-	printf("msg put done\n");
 	msg->file_name 	= (char *)malloc(sizeof(char) * header.file_name_size);
-	printf("file name done\n");
 	msg->owner	 	= (char *)malloc(sizeof(char) * header.owner_size);
-	printf("owner done\n");
 	msg->data		= (char *)malloc(sizeof(char) * header.data_size);
-	printf("data done\n");
 	memcpy(&(msg->header), &header, sizeof(MsgHeader));
 
 	/* 순서대로 recv */
-	recv(client_socket, msg->file_name, msg->header.file_name_size, 0);
+	recv(client_socket, msg->file_name, (msg->header).file_name_size, 0);
 	recv(client_socket, msg->owner ,	msg->header.owner_size, 0);
 	recv(client_socket, msg->data,		msg->header.data_size, 0);
-
-	//printf("RECEVIED : %s, %s, %s\n", msg_put->file_name, msg_put->owner, msg_put->data);
 }
 
 void free_put(MsgPUT *msg_put) {
@@ -53,7 +42,8 @@ void free_put(MsgPUT *msg_put) {
 }
 
 void send_put_reply(int client_socket, MsgPUTREPLY *msg_put_reply) {
-	
+	//send(client_socket, &(msg_put_reply->header), sizeof(MsgHeader), 0);	
+	send_header(client_socket, msg_put_reply->header);
 }
 
 void recv_put_reply(int client_socket, MsgPUTREPLY *msg_put_reply) {
@@ -61,7 +51,35 @@ void recv_put_reply(int client_socket, MsgPUTREPLY *msg_put_reply) {
 }
 
 void free_put_reply(MsgPUTREPLY *msg_put_reply) {
+	free(msg_put_reply);
+}
 
+void send_get(int client_socket, MsgGET *msg_get) { }
+void recv_get(int client_socket, MsgHeader header, MsgGET *msg_get) { }
+void free_get(MsgGET *msg_get) { }
+void send_get_reply(int client_socket, MsgGETREPLY *msg_get_reply) { }
+
+void 
+recv_get_reply(int client_socket, MsgHeader header, MsgGETREPLY *msg_get_reply) 
+{
+	msg_get_reply = malloc(sizeof(MsgGETREPLY));
+	msg_get_reply->file_name = (char *)malloc(sizeof(char) * header.file_name_size);
+	msg_get_reply->owner = (char *)malloc(sizeof(char) * header.owner_size);
+	msg_get_reply->data = (char *)malloc(sizeof(char) * header.data_size);
+	memset(&(msg_get_reply->header), &header, sizeof(MsgHeader));
+
+	recv(client_socket, msg_get_reply->file_name, msg_get_reply->header.file_name_size, 0);
+	recv(client_socket, msg_get_reply->owner, msg_get_reply->header.owner_size, 0);
+	recv(client_socket, msg_get_reply->data, msg_get_reply->header.data_size, 0);
+}
+
+void 
+free_get_reply(MsgGETREPLY *msg_get_reply) 
+{
+	free(msg_get_reply->data);
+	free(msg_get_reply->owner);
+	free(msg_get_reply->file_name);
+	free(msg_get_reply);
 }
 
 
