@@ -16,8 +16,8 @@
 void set_server_socket(int *server_socket, struct sockaddr_in *server_addr);
 void put(int client_socket, MsgHeader h);
 void reply_put(int client_socket);
-void get(int clinet_socket, MsgHeader h);
-void reply_get(int client_socket);
+char* get(int clinet_socket, MsgHeader h);
+void reply_get(int client_socket, char* file_name);
 void list(int client_socket);
 void reply_list(int client_socket);
 
@@ -44,6 +44,8 @@ main(char *args, char *argv[])
 	MsgLISTREPLY 	msg_list_reply;
 
 	DIR *d; /* DIR : directory stream */
+
+	char *file_name;
 
 	/* 서버 소켓 생성 부터 listen 상태까지 세팅 */
 	set_server_socket(&server_socket, &server_addr);
@@ -73,8 +75,9 @@ main(char *args, char *argv[])
 				break;
 			}
 			case GET:
-				get(client_socket, header);
-				reply_get(client_socket);
+				file_name = get(client_socket, header);
+				reply_get(client_socket, file_name);
+				free(file_name);
 				break;
 			case LIST:
 				list(client_socket, header);
@@ -131,7 +134,6 @@ put(int client_socket, MsgHeader h)
 	uint32_t rest;
 	MsgHeader header;
 
-	msg_put = malloc(sizeof(MsgPUT));
 	memcpy(&header, &h, sizeof(header));
 
 	recv_put(client_socket, header, msg_put);
@@ -145,7 +147,6 @@ put(int client_socket, MsgHeader h)
 	
 	while(rest > 0) {
 		printf("rest > %zu\n", rest);
-		msg_put = malloc(sizeof(MsgPUT));
 		recv_header(client_socket, &header);
 		recv_put(client_socket, header, msg_put);
 		write(fd, msg_put->data, (msg_put->header).data_size);
@@ -172,28 +173,119 @@ reply_put(int client_socket)
 	free_put_reply(msg_put_reply);
 }
 
-void
+char*
 get(int client_socket, MsgHeader header)
 {
+	MsgGET *msg_get;
+	char* file_name;
 
+	recv_get(client_socket, header, msg_get);
+
+	file_name = (char *)malloc(sizeof(char) * header.file_name_size);
+	memcpy(file_name, msg_get->file_name, msg_get->header.file_name_size);
+
+	free(msg_get);
+	return file_name;	
 }
 
 void
-reply_get(int client_socket) 
+reply_get(int client_socket, char *file_name) 
 {
+	MsgHeader header;
+	MsgGETREPLY *msg_get_reply;
+	
+	int fd, file_size;
+	int total_offset;
+	int rest, i;
 
+	if((fd = open(file_name, O_RDONLY)) == -1) {
+		printf("Cant open file > %s\n", file_name);
+		return;
+	}
+
+	file_size = get_file_size(file_name);
+	total_offset = cceil(((double) file_size) / BUFF_SIZE);
+	
+	memset(&header, 0, sizeof(header));
+	header.file_name_size = strlen(file_name);
+	header.owner_size = 0;
+	header.total_offset = total_offset;
+	header.file_size = file_size;
+
+	rest = file_size;
+
+	for(i = 0; i < total_offset; i++) {
+		header.offset = i;
+		header.data_size = (rest > BUFF_SIZE) ? BUFF_SIZE : rest;
+
+		rest = (rest > BUFF_SIZE) ? rest - BUFF_SIZE : 0;
+
+		send_get_reply(client_socket, fd, file_name, header, msg_get_reply);
+		free_get_reply(msg_get_reply);
+	}
+	
+	close(fd);
 }
 
-void 
+void
 list(int client_socket, MsgHeader header)
 {
-
+	MsgLIST *msg_list;
+	
+	recv_list(client_socket, header, msg_list);
+	free(msg_list);	
 }
 
 void 
 reply_list(int client_socket)
 {
+	MsgHeader header;
+	MsgLISTREPLY *msg_list_reply;
 
+	struct dirent *de;
+	
+	DIR *dr = opendir(".");
+
+	int offset, total_offset = 0;
+
+
+	if(dr == NULL) {
+		printf("Could not open current directory.\n");
+		return;
+	}
+
+	memset(&header, 0, sizeof(MsgHeader));
+	
+	while((de = readdir(dr)) != NULL) {
+		total_offset = total_offset + 1;
+	}
+	closedir(dr);
+
+	header.total_offset = total_offset;	
+	offset = 0;
+
+	while((de = readdir(dr)) != NULL) {
+		header.data_size = strlen(de->d_name);
+		header.offset = offset;
+
+		msg_list_reply = malloc(sizeof(MsgLISTREPLY));
+		msg_list_reply->data = (char *)malloc(sizeof(char) * strlen(de->d_name));
+
+		memcpy(&(msg_list_reply->header), &header, sizeof(MsgHeader));
+		memcpy(msg_list_reply->data, de->d_name, sizeof(char) * strlen(de->d_name));
+
+		send(client_socket, &(msg_list_reply->header), sizeof(MsgHeader), 0);
+		send(client_socket, msg_list_reply->data, sizeof(char) * strlen(de->de_name));
+
+		free(msg_list_reply->data);
+		free(msg_list_reply);
+
+		offset = offset + 1;
+	}
+
+	closedir(dr);
+
+	return;
 }
 
 

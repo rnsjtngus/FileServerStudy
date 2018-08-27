@@ -26,7 +26,7 @@ typedef struct _MsgHeader {
 	uint32_t file_name_size;
 	uint32_t owner_size;
 	uint32_t total_offset;
-	uint32_t curr_offset;
+	uint32_t offset;
 	uint32_t file_size;
 	uint32_t data_size;
 }MsgHeader;
@@ -57,7 +57,7 @@ typedef struct _MsgGETREPLY {
 	MsgHeader header;
 	char *file_name;
 	char *owner;
-	char *buffer;
+	char *data;
 }MsgGETREPLY;
 
 typedef struct _MsgLISTREPLY {
