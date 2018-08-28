@@ -9,7 +9,7 @@
 #include <dirent.h>
 #include "../Common/common.h"
 
-#define BUFF_MAX_SIZE 1024
+#define BUFF_SIZE 1024
 #define PORT 7777
 #define SAVE_DIR "./Files/"
 
@@ -18,7 +18,7 @@ void put(int client_socket, MsgHeader h);
 void reply_put(int client_socket);
 char* get(int clinet_socket, MsgHeader h);
 void reply_get(int client_socket, char* file_name);
-void list(int client_socket);
+void list(int client_socket, MsgHeader header);
 void reply_list(int client_socket);
 
 int 
@@ -134,8 +134,10 @@ put(int client_socket, MsgHeader h)
 	uint32_t rest;
 	MsgHeader header;
 
+	msg_put = malloc(sizeof(MsgPUT));
 	memcpy(&header, &h, sizeof(header));
 
+	printf("START TO RECV\n");
 	recv_put(client_socket, header, msg_put);
 
 	/* start to write file */
@@ -153,6 +155,7 @@ put(int client_socket, MsgHeader h)
 		rest = rest - (msg_put->header).data_size;
 		free_put(msg_put);
 	}
+	free(msg_put);
 }
 
 void 
@@ -179,12 +182,16 @@ get(int client_socket, MsgHeader header)
 	MsgGET *msg_get;
 	char* file_name;
 
+	msg_get = malloc(sizeof(MsgGET));
 	recv_get(client_socket, header, msg_get);
 
 	file_name = (char *)malloc(sizeof(char) * header.file_name_size);
 	memcpy(file_name, msg_get->file_name, msg_get->header.file_name_size);
-
+	
+	free_get(msg_get);
 	free(msg_get);
+
+	printf("FILE NAME : %s\n", file_name);
 	return file_name;	
 }
 
@@ -198,6 +205,8 @@ reply_get(int client_socket, char *file_name)
 	int total_offset;
 	int rest, i;
 
+	printf("FILE NAME : %s!\n", file_name);
+
 	if((fd = open(file_name, O_RDONLY)) == -1) {
 		printf("Cant open file > %s\n", file_name);
 		return;
@@ -206,6 +215,8 @@ reply_get(int client_socket, char *file_name)
 	file_size = get_file_size(file_name);
 	total_offset = cceil(((double) file_size) / BUFF_SIZE);
 	
+	msg_get_reply = malloc(sizeof(MsgGETREPLY));
+
 	memset(&header, 0, sizeof(header));
 	header.file_name_size = strlen(file_name);
 	header.owner_size = 0;
@@ -213,8 +224,9 @@ reply_get(int client_socket, char *file_name)
 	header.file_size = file_size;
 
 	rest = file_size;
-
+	printf("Start to send files\n");
 	for(i = 0; i < total_offset; i++) {
+		printf("%d\n", i);
 		header.offset = i;
 		header.data_size = (rest > BUFF_SIZE) ? BUFF_SIZE : rest;
 
@@ -223,7 +235,7 @@ reply_get(int client_socket, char *file_name)
 		send_get_reply(client_socket, fd, file_name, header, msg_get_reply);
 		free_get_reply(msg_get_reply);
 	}
-	
+	free(msg_get_reply);
 	close(fd);
 }
 
@@ -232,8 +244,16 @@ list(int client_socket, MsgHeader header)
 {
 	MsgLIST *msg_list;
 	
+	msg_list = malloc(sizeof(MsgLIST));
+	
+	printf("Start to recv list\n");
+
 	recv_list(client_socket, header, msg_list);
-	free(msg_list);	
+
+	free_list(msg_list);
+	free(msg_list);
+	printf("Done\n");
+	
 }
 
 void 
@@ -248,6 +268,7 @@ reply_list(int client_socket)
 
 	int offset, total_offset = 0;
 
+	printf("Start to reply list\n");
 
 	if(dr == NULL) {
 		printf("Could not open current directory.\n");
@@ -256,34 +277,41 @@ reply_list(int client_socket)
 
 	memset(&header, 0, sizeof(MsgHeader));
 	
+	printf("Check file numbers\n");
+
 	while((de = readdir(dr)) != NULL) {
 		total_offset = total_offset + 1;
 	}
 	closedir(dr);
+	printf("Total files : %d\n", total_offset);
+	printf("Start to send list\n");
 
+	dr = opendir(".");
 	header.total_offset = total_offset;	
 	offset = 0;
 
 	while((de = readdir(dr)) != NULL) {
-		header.data_size = strlen(de->d_name);
+		printf("Sending %dth file name : %s\n", offset, de->d_name);
+		header.file_name_size = strlen(de->d_name);
 		header.offset = offset;
 
 		msg_list_reply = malloc(sizeof(MsgLISTREPLY));
-		msg_list_reply->data = (char *)malloc(sizeof(char) * strlen(de->d_name));
+		msg_list_reply->file_name = (char *)malloc(sizeof(char) * strlen(de->d_name));
 
 		memcpy(&(msg_list_reply->header), &header, sizeof(MsgHeader));
-		memcpy(msg_list_reply->data, de->d_name, sizeof(char) * strlen(de->d_name));
+		memcpy(msg_list_reply->file_name, de->d_name, sizeof(char) * strlen(de->d_name));
 
 		send(client_socket, &(msg_list_reply->header), sizeof(MsgHeader), 0);
-		send(client_socket, msg_list_reply->data, sizeof(char) * strlen(de->de_name));
+		send(client_socket, msg_list_reply->file_name, sizeof(char) * strlen(de->d_name), 0);
 
-		free(msg_list_reply->data);
+		free(msg_list_reply->file_name);
 		free(msg_list_reply);
 
 		offset = offset + 1;
 	}
 
 	closedir(dr);
+	printf("Done\n");
 
 	return;
 }

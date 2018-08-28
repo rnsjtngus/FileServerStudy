@@ -246,6 +246,7 @@ reply_get(int client_socket)
 	
 	int fd;
 
+	msg_get_reply = malloc(sizeof(MsgGETREPLY));
 	memset(&header, 0, sizeof(MsgHeader));
 	
 	recv(client_socket, &header, sizeof(MsgHeader), 0);
@@ -265,6 +266,8 @@ reply_get(int client_socket)
 		rest = rest - (msg_get_reply->header).data_size;
 		free_get_reply(msg_get_reply);
 	}
+	printf("RECIVED SUCCESSFULLY\n");
+	free(msg_get_reply);
 }
 
 void
@@ -283,9 +286,13 @@ list(int client_socket)
 	msg_list->owner = (char *)malloc(sizeof(char) * header.owner_size);
 	
 	send(client_socket, &header, sizeof(MsgHeader), 0);
+	send(client_socket, msg_list->owner, msg_list->header.owner_size, 0);
 	
+	printf("owner size : %zu\n", msg_list->header.owner_size);
+
 	free(msg_list->owner);
 	free(msg_list);
+	printf("List Done\n");
 }
 
 void 
@@ -296,7 +303,10 @@ reply_list(int client_socket)
 	MsgLISTREPLY *msg_list_reply;
 
 	int rest;
+	
+	printf("Start to reply list\n");
 
+	msg_list_reply = malloc(sizeof(MsgLISTREPLY));
 	memset(&header, 0, sizeof(MsgHeader));
 	recv(client_socket, &header, sizeof(MsgHeader), 0);
 
@@ -311,13 +321,16 @@ reply_list(int client_socket)
 	}
 
 	free_list_reply(msg_list_reply);
+	rest = rest - 1;
 
 	while(rest > 0) {
 		recv(client_socket, &header, sizeof(MsgHeader), 0);
 		recv_list_reply(client_socket, header, msg_list_reply);
 		printf("%d. %s\n", msg_list_reply->header.offset, msg_list_reply->file_name);
 		free_list_reply(msg_list_reply);
+		rest = rest - 1;
 	}
+	free(msg_list_reply);
 	printf("=== End of files list ===\n");
 }
 
