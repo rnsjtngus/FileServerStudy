@@ -7,19 +7,38 @@
 #include <fcntl.h> /* for the open options */
 #include <unistd.h>
 #include <dirent.h>
-#include "../Common/common.h"
+#include <libaio.h>
+//#include <linux/aio_abi.h>
+#include <pthread.h>
+//#include <linux/aio_abi.h>
+//#include <linux/time.h>
 
+#include "../Common/common.h"
+#include "../Common/job.h"
+#include "../Common/queue.h"
+
+#define MAX_BUFF_SIZE 1024
+
+#define EVENT_MAX_VALUE 1024
 #define BUFF_SIZE 1024
 #define PORT 7777
 #define SAVE_DIR "./Files/"
 
 void set_server_socket(int *server_socket, struct sockaddr_in *server_addr);
-void put(int client_socket, MsgHeader h);
+void server_put(int client_socket, msg_meta_t *msg_meta, queue_t *job_queue);
 void reply_put(int client_socket);
 char* get(int clinet_socket, MsgHeader h);
 void reply_get(int client_socket, char* file_name);
 void list(int client_socket, MsgHeader header);
 void reply_list(int client_socket);
+
+void* wthr_work(void* jq);
+void submit_write_aio(job_t* job);
+void submit_read_aio(job_t* job);
+void* sthr_work(void* jq);
+
+
+io_context_t ctx;
 
 int 
 main(char *args, char *argv[]) 
@@ -28,30 +47,54 @@ main(char *args, char *argv[])
 	int server_socket;
 	int client_socket;
 	int client_addr_size;
-	int fd;
+	int pid, fd;
+	pthread_t wthr, sthr;
+	int wthr_id, sthr_id;
 
 	struct sockaddr_in client_addr;
 	struct sockaddr_in server_addr;
 
-	struct dirent *dir; /* include inode, offset, length, file_name */
-
-	MsgHeader 		header;
-	//MsgPUT 			msg_put;
-	MsgGET 			msg_get;
-	MsgLIST 		msg_list;
-	MsgPUTREPLY 	msg_put_reply;
-	MsgGETREPLY 	msg_get_reply;
-	MsgLISTREPLY 	msg_list_reply;
-
-	DIR *d; /* DIR : directory stream */
-
 	char *file_name;
+
+	msg_meta_t *msg_meta;
+
+	queue_t* job_queue;
+
+	/* io context 초기화 */
+	memset(&ctx, 0, sizeof(ctx));
+	if(io_setup(10, &ctx) != 0) err(1, "io_setup");
+
+	/* job queue 초기화 */
+	job_queue = init_queue();
+
+	/* wthr, sthr 초기화 */
+	wthr_id = pthread_create(&wthr, NULL, wthr_work, job_queue);
+	sthr_id = pthread_create(&sthr, NULL, sthr_work, job_queue);
+
+	printf("wthr id, sthr id : %d, %d\n", wthr, sthr);
 
 	/* 서버 소켓 생성 부터 listen 상태까지 세팅 */
 	set_server_socket(&server_socket, &server_addr);
 
-	while(1) {
-		/* client가 connect시 accept */
+	client_addr_size = sizeof(client_addr);
+	client_socket = accept(server_socket, 
+						(struct sockaddr*) &client_addr, 
+						&client_addr_size);
+
+	if(client_socket == -1) {
+		printf("Fail to connect with client\n");
+		exit(1);
+	}
+	
+	/*
+	memset(&header, 0, sizeof(MsgHeader));
+	recv_header(client_socket, &header);
+	*/
+
+	/* recv msg meta */
+	msg_meta_recv(client_socket, msg_meta);
+
+	while(1){
 		client_addr_size = sizeof(client_addr);
 		client_socket = accept(server_socket, 
 							(struct sockaddr*) &client_addr, 
@@ -61,34 +104,35 @@ main(char *args, char *argv[])
 			printf("Fail to connect with client\n");
 			exit(1);
 		}
+	
+		/*
+		memset(&header, 0, sizeof(MsgHeader));
 		recv_header(client_socket, &header);
+		*/
+	
+		/* recv msg meta */
+		msg_meta_recv(client_socket, msg_meta);
 
-		switch(header.msg_type) {
-			case PUT:
-			{
-				/* read put data and write */
-				put(client_socket, header); 
-
-				/* send put_reply */
-				reply_put(client_socket);
-
+		switch(msg_meta->type) {
+			case MSG_PUT:
+				put(client_socket, msg_meta, job_queue); 
 				break;
-			}
-			case GET:
-				file_name = get(client_socket, header);
-				reply_get(client_socket, file_name);
-				free(file_name);
+			case MSG_GET:
+				get(client_socket, header);
 				break;
-			case LIST:
-				list(client_socket, header);
-				reply_list(client_socket);
+			case MSG_LIST:
 				break;
 			default:
 				printf("Received wrong message.\n");
 				break;
-		}
-		close(client_socket);
+		}	
+		close(client_socket);	
 	}
+	io_destroy(ctx);
+
+	/* free malloc */
+	remove_queue(job_queue);
+
 	return 0;
 }
 
@@ -125,10 +169,96 @@ set_server_socket(int *server_socket, struct sockaddr_in *server_addr)
 	printf("Start to Listen\n");
 }
 
+void
+server_put(int client_socket, msg_meta_t *msg_meta, queue_t *job_queue)
+{
+	int fd, i;
+	int *count;
+	char* buff;
+	msg_put_t *msg_put;
+	job_t *j;
+
+	/* open file */
+	if((fd = open(msg_meta->file_name, O_WRONLY | O_CREAT, R_IRWXU)) == -1) {
+		printf("[PUT] Fail to open file.\n");
+		return;
+	}
+	
+	/* recv msg put & make job & enqueue job */
+	count = (int *)malloc(sizeof(int));
+	*count = msg_meta->total_offset;
+	for(i = 0; i < msg_meta->total_offset; i++) {
+		/* init & recv msg put */
+		msg_put = (msg_put_t *)malloc(sizeof(msg_put_t));
+		msg_recv(client_socket, msg_put, sizeof(msg_put_t) - sizeof(char *), 0);
+
+		msg_put->buff = (char *)malloc(sizeof(char) * msg_put->buff_size);
+		msg_recv(client_socket, msg_put->buff, sizeof(char) * msg_put->buff_size, 0);
+
+		/* copy buff */
+		buff = (char *)malloc(sizeof(char) * msg_put->buff_size);
+		memcpy(buff, msg_put->buff, sizeof(char) * msg_put->buff_size);
+
+		/* make job and enqueue to job queue */
+		j = init_job(J_OP_AIO_WRITE, client_socket, fd, 
+				msg_put->offset * msg_meta->max_buff_size,
+				msg_put->buff_size, buff, count);
+		
+		enqueue(job_queue, j);
+
+		/* free msg put */
+		free(msg_put->buff);
+		free(msg_put);
+	}
+	
+	/* free msg meta */
+	msg_meta_free(msg_meta);
+
+	return;
+}
+
+void
+server_get(int client_socket, msg_meta_t *msg_meta, queue_t *job_queue)
+{
+	int fd, file_size, total_offset, buff_size, i;
+	int* count;	
+	char* buff;
+	job_t *job;
+
+	/* open file and check file exist */
+	if((fd = open(msg_meta->file_name, O_RDONLY, S_IRWXU)) == -1) {
+		printf("[GET] Fail to open file.\n");
+		return;
+	}
+
+	file_size = get_file_size(msg_meta->file_name);
+	total_offset = cceil(((double) file_size) / MAX_BUFF_SIZE);
+	
+	count = (int *)malloc(sizeof(int));
+	*count = total_offset;
+
+	/** TODO : send get reply fisrt?????? **/
+
+	for(i = 0; i < total_offset; i++) {
+		/* init job */
+		buff_size = (rest > MAX_BUFF_SIZE) ? MAX_BUFF_SIZE : rest;
+		job = init_job(J_OP_AIO_READ, client_socket, fd,
+				i * MAX_BUFF_SIZE, buff, buff_size, count);
+
+		enqueue(job_queue, j);
+	}
+	/* free msg put */
+	msg_meta_free(msg_meta);
+
+	return;
+}
+
+
+
+/*
 void 
 put(int client_socket, MsgHeader h) 
 {
-	/* 변수 선언 */
 	int fd;
 	MsgPUT *msg_put;
 	uint32_t rest;
@@ -140,7 +270,6 @@ put(int client_socket, MsgHeader h)
 	printf("START TO RECV\n");
 	recv_put(client_socket, header, msg_put);
 
-	/* start to write file */
 	printf("%s\n", msg_put->file_name);
 	fd = open(msg_put->file_name, O_WRONLY |O_CREAT);
 	write(fd, msg_put->data, (msg_put->header).data_size);	
@@ -161,7 +290,6 @@ put(int client_socket, MsgHeader h)
 void 
 reply_put(int client_socket) 
 {
-	/* 변수 선언 */
 	MsgPUTREPLY *msg_put_reply;
 	MsgHeader header;
 	
@@ -315,5 +443,107 @@ reply_list(int client_socket)
 
 	return;
 }
+*/
 
+void*
+wthr_work(void* jq)
+{
+	queue_t *job_queue = (queue_t *)jq;
+	job_t *j;
+	while(1) {
+		if(!is_empty(job_queue)) {
+			j = (job_t *)dequeue(job_queue);
+			switch(j->operation) {
+			case J_OP_AIO_WRITE:
+				submit_write_aio(j);
+				break;
+			case J_OP_AIO_READ:
+				submit_read_aio(j);
+				break;
+			case J_OP_LIST:
+				break;
+			case J_OP_AIO_WRITE_POST:
+				break;
+			case J_OP_AIO_READ_POST:
+				break;
+			case J_OP_LIST_POST:
+				break;
+			default:
+				break;
+			}
+		}
+	}
+}
 
+void
+submit_write_aio(job_t* j)
+{
+	struct iocb iocb;
+	struct iocb* iocbs[1];
+
+	io_prep_pwrite(&iocb, j->fd, j->buff, j->buff_size, j->offset);
+	iocb.data = (void *) j;
+
+	iocbs[0] = &iocb;
+
+	if(io_submit(ctx, 1, iocbs) != 1) {
+		io_destroy(ctx);
+		err(1, "[submit_write_aio] io_submit");
+	}
+}
+
+void
+submit_read_aio(job_t* j)
+{
+	struct iocb iocb;
+	struct iocb* iocbs[1];
+
+	io_prep_pread(&iocb, j->fd, j->buff, j->buff_size, j->offset);
+	iocb.data = (void *) j;
+
+	iocbs[0] = &iocb;
+
+	if(io_submit(ctx, 1, iocbs) != 1) {
+		io_destroy(ctx);
+		err(1, "[submit_read_aio] io_submit");
+	}
+}
+
+void*
+sthr_work(void* jq)
+{
+	queue_t *job_queue = (queue_t *)jq;
+
+	struct io_event events[EVENT_MAX_VALUE];
+	struct timespec timeout;
+	struct iocb* iocb;
+
+	int events_num, i;
+	job_t* j;
+
+	timeout.tv_sec = 0;
+	timeout.tv_nsec = 100000000;
+
+	while(1) {
+		if((events_num = io_getevents(ctx, 0, 10, events, &timeout)) > 1) {
+			for(i = 0; i < events_num; i++) {
+				iocb = (struct iocb *) events[i].obj;
+				j = (job_t *) events[i].data;
+				
+				switch(j->operation) {
+				case J_OP_AIO_WRITE:
+					j->operation = J_OP_AIO_WRITE_POST;
+					enqueue(job_queue, j);
+					break;
+				case J_OP_AIO_READ:
+					j->operation = J_OP_AIO_READ_POST;
+					enqueue(job_queue, j);
+					break;
+				default:
+					printf("Something wrong\n");
+					break;
+				}
+			}
+		}
+	}
+}

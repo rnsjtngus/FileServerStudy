@@ -8,6 +8,11 @@
 #include <fcntl.h>
 //#include <math.h>
 #include "../Common/common.h"
+#include "../Common/message.h"
+
+#define MAX_USER_NAME_SIZE 1024
+#define MAX_FILE_NAME_SIZE 1024
+#define MAX_BUFF_SIZE 1024
 
 #define REPLY_MSG_SIZE 1024
 #define FILE_NAME_SIZE 1024
@@ -15,14 +20,12 @@
 #define PORT 7777
 
 void set_client_socket(int *client_socekt, struct sockaddr_in *server_addr); 
-void put(int client_socket);
-void reply_put(int client_socket);
-void get(int client_socket);
-void reply_get(int client_socket);
-void list(int client_socket);
-void reply_list(int client_socket);
-uint32_t get_file_size(char *file_name);
-int cceil(double x);
+void client_put(int client_socket);
+void client_reply_put(int client_socket);
+void client_get(int client_socket);
+void client_reply_get(int client_socket);
+void client_list(int client_socket);
+void client_reply_list(int client_socket);
 
 int 
 main(int argc, char *argv[]) 
@@ -54,26 +57,22 @@ main(int argc, char *argv[])
 
 		switch(command) {
 			case 1: // PUT
-				put(client_socket);
-				reply_put(client_socket);
+				client_put(client_socket);
+				client_reply_put(client_socket);
 				break;
-			
 			case 2: // GET
-				get(client_socket);
-				reply_get(client_socket);
+				client_get(client_socket);
+				client_reply_get(client_socket);
 				break;
-			
 			case 3: // LIST
-				list(client_socket);
-				reply_list(client_socket);
+				client_list(client_socket);
+				client_reply_list(client_socket);
 				break;
-			
 			case 4: // QUIT
 				printf("Quit.\n");
 				close(client_socket);
 				exit(1);
 				break;
-			
 			default:
 				printf("Wrong Input. Try Again.\n");
 				break;
@@ -110,246 +109,239 @@ set_client_socket(int *client_socket, struct sockaddr_in *server_addr)
 }
 
 void
-put(int client_socket) 
+client_put(int client_socket)
 {
-	/* 변수 선언 */
-	int fd;
-	int total_offset;
-	int i;
+	int fd, total_offset, i;
+	uint32_t file_size, rest;	
+	char user_name[MAX_USER_NAME_SIZE];
+	char file_name[MAX_FILE_NAME_SIZE];
+	char buff[MAX_BUFF_SIZE];
+	msg_meta_t *msg_meta; 
+	msg_put_t *msg_put;
 
-	uint32_t file_size, rest;
-
-	char file_name[FILE_NAME_SIZE];
-	char buff[BUFF_SIZE];
-
-	MsgHeader header;
-
-	MsgPUT *msg_put;
-
+	/* get file name from user */
 	printf("Enter the file name > ");
 	scanf("%s", file_name);
-				
-	if((fd = open(file_name, O_RDONLY)) == -1) {
+
+	if((fd = open(file_name, O_RDONLY, S_IRWXU)) == -1) {
 		printf("[PUT] Fail to open file. Try again.\n");
 		return;
 	}
 
+	/* get file info */
 	file_size = get_file_size(file_name);
-	total_offset = cceil(((double) file_size) / BUFF_SIZE);
-	
-	memset(&header, 0, sizeof(header));
-	header.file_name_size = strlen(file_name);
-	header.owner_size = 0;
-	header.total_offset = total_offset;
-	header.file_size = file_size;
-	//header.curr_offset = 0;
-	//header.data_size = (header.offset == total_offset - 1) ? file_size : BUFF_SIZE;
-	
+	total_offset = cceil(((double) file_size) / MAX_BUFF_SIZE);
+
+	/* get user info */
+	getlogin_r(user_name, MAX_USER_NAME_SIZE);
+
+	/* set msg meta */
+	msg_meta = (msg_meta_t *)malloc(sizeof(msg_meta_t));
+	msg_meta->file_name = (char *)malloc(sizeof(char) * strlen(file_name));
+	msg_meta->owner_name = (char *)malloc(sizeof(char) * strlen(user_name));
+
+	msg_meta->type = MSG_PUT;
+	msg_meta->file_name_size = strlen(file_name);
+	msg_meta->owner_name_size = strlen(user_name);
+	msg_meta->total_offset = total_offset;
+	msg_meta->max_buff_size = MAX_BUFF_SIZE;
+	msg_meta->file_size = file_size;
+
+	memcpy(msg_meta->file_name, file_name, strlen(file_name));
+	memcpy(msg_meta->owner_name, user_name, strlen(user_name));
+
+	/* send msg meta */
+	msg_send(client_socket, msg_meta, sizeof(msg_meta_t) - sizeof(char *) * 2, 0);
+	msg_send(client_socket, msg_meta->file_name, msg_meta->file_name_size, 0);
+	msg_send(client_socket, msg_meta->owner_name, msg_meta->owner_name_size, 0);
+
+	/* free msg meta */
+	msg_meta_free(msg_meta);
+
 	rest = file_size;
+	for(i = 0; i++; i < total_offset) {
+		/* set msg put */
+		msg_put = (msg_put_t *)malloc(sizeof(msg_put_t));
+		msg_put->curr_offset = i;
+		msg_put->buff_size = (rest > MAX_BUFF_SIZE) ? MAX_BUFF_SIZE : rest;
+		rest = (rest > MAX_BUFF_SIZE) ? rest - MAX_BUFF_SIZE : 0;
+		msg_put->buff = (char *)malloc(sizeof(char) * msg_put->buff_size);
+		read(fd, msg_put->buff, sizeof(char) * msg_put->buff_size);
 
-	for(i = 0; i < total_offset; i++) {
-		header.offset = i;
-		header.data_size = (rest > BUFF_SIZE) ? BUFF_SIZE : rest;
+		/* send msg put */
+		msg_send(client_socket, msg_put, sizeof(msg_put_t) - sizeof(char *), 0);
+		msg_send(client_socket, msg_put->buff, sizeof(char) * msg_put->buff_size, 0);
 
-		rest = (rest > BUFF_SIZE) ? rest - BUFF_SIZE : 0;
-
-		msg_put = (MsgPUT *)malloc(sizeof(MsgPUT));
-		msg_put->file_name 	= (char *)malloc(sizeof(char) * header.file_name_size);
-		msg_put->owner 		= (char *)malloc(sizeof(char) * header.owner_size);
-		msg_put->data 		= (char *)malloc(sizeof(char) * header.data_size);
-		
-		memcpy(&(msg_put->header), &header, sizeof(header));
-		memcpy(msg_put->file_name, file_name, sizeof(char) * header.file_name_size);
-		read(fd, msg_put->data, sizeof(char) * header.data_size);
-
-		send(client_socket, &(msg_put->header), sizeof(header), 0);
-		send(client_socket, msg_put->file_name, header.file_name_size, 0);
-		send(client_socket, msg_put->owner, header.owner_size, 0);
-		send(client_socket, msg_put->data, header.data_size, 0);
-
-		free(msg_put->file_name);
-		free(msg_put->owner);
-		free(msg_put->data);
+		/* free msg put */
+		free(msg_put->buff);
 		free(msg_put);
 	}
-
 	close(fd);
+	return;
 }
 
 void
-reply_put(int client_socket) 
+client_reply_put(int client_socket)
 {
-	MsgPUTREPLY *msg_put_reply;
-	MsgHeader header;
+	msg_meta_t *msg_meta;
 
-	msg_put_reply = malloc(sizeof(MsgPUTREPLY));
-	memset(&header, 0, sizeof(MsgHeader));
+	/* recv msg meta */
+	msg_meta_recv(client_socket, msg_meta);
 
-	recv(client_socket, &header, sizeof(MsgHeader), 0);
+	/* check success or fail */
+	printf("[PUT] SUCCESS\n");
 
-	memcpy(&(msg_put_reply->header), &header, sizeof(MsgHeader));
+	/* free msg meta */
+	free(msg_meta);
 
-	if((msg_put_reply->header).err_code != SUCCESS) {
-		printf("[PUT REPLY] Fail.\n");
-	} else {
-		printf("[PUT REPLY] Success.\n");
-	}
-
-	free(msg_put_reply);
+	return;
 }
 
 void
-get(int client_socket) 
+client_get(int client_socket)
 {
-	/* 변수 선언 */
-	int file_name_size;
-	
-	char file_name[FILE_NAME_SIZE];
+	char file_name[MAX_FILE_NAME_SIZE];
+	char owner_name[MAX_USER_NAME_SIZE];
+	msg_meta_t *msg_meta;
+	msg_get_t *msg_get;
 
-	MsgHeader header;
-	MsgGET *msg_get;
-
+	/* get file name from user */
 	printf("Enter the file name > ");
 	scanf("%s", file_name);
-	file_name_size = strlen(file_name);
-
-	memset(&header, 0, sizeof(MsgHeader));
-
-	header.msg_type 		= GET;
-	header.file_name_size 	= file_name_size;
-	header.owner_size 		= 0;
-
-	msg_get 			= malloc(sizeof(MsgGET));
-	msg_get->file_name 	= (char *)malloc(sizeof(char) * header.file_name_size);
-	msg_get->owner 		= (char *)malloc(sizeof(char) * header.owner_size);
 	
-	memcpy(&(msg_get->header), &header, sizeof(MsgHeader));
-	memcpy(msg_get->file_name, file_name, file_name_size);
-	memcpy(msg_get->owner, 0, 0);
+	/* get user name */
+	getlogin_r(owner_name, MAX_USER_NAME_SIZE);
 
-	send(client_socket, &header, sizeof(MsgHeader), 0);
-	send(client_socket, msg_get->file_name, file_name_size, 0);
+	/* init msg meta */
+	msg_meta = (msg_meta_t *)malloc(sizeof(msg_meta_t));
+	msg_meta->file_name = (char *)malloc(sizeof(char) * strlen(file_name));
+	msg_meta->owner_name = (char *)malloc(sizeof(char) * strlen(owner_name));
 
-	free(msg_get->owner);
-	free(msg_get->file_name);
-	free(msg_get);
-}
+	msg_meta->type = MSG_GET;
+	msg_meta->file_name_size = strlen(file_name);
+	msg_meta->owner_name_size = strlen(owner_name);
+	msg_meta->total_offset = 0;
+	msg_meta->max_buff_size = 0;
+	msg_meta->file_size = 0;
 
-void 
-reply_get(int client_socket)
-{
-	/* 변수 선언 */
-	MsgHeader header;
-	MsgGETREPLY *msg_get_reply;
+	memcpy(msg_meta->file_name, file_name, sizeof(char) * strlen(file_name));
+	memcpy(msg_meta->owner_name, owner_name, sizeof(char) * strlen(owner_name));
 
-	uint32_t rest;
-	
-	int fd;
+	/* send msg meta */
+	msg_send(client_socket, msg_meta, sizeof(msg_meta) - sizeof(char *) * 2, 0);
+	msg_send(client_socket, msg_meta->file_name, sizeof(char) * msg_meta->file_name_size, 0);
+	msg_send(client_socket, msg_meta->owner_name, sizeof(char) * msg_meta->owner_name_size, 0);
 
-	msg_get_reply = malloc(sizeof(MsgGETREPLY));
-	memset(&header, 0, sizeof(MsgHeader));
-	
-	recv(client_socket, &header, sizeof(MsgHeader), 0);
+	/* free msg meta */
+	msg_meta_free(msg_meta);
 
-	recv_get_reply(client_socket, header, msg_get_reply);
-
-	fd = open(msg_get_reply->file_name, O_WRONLY | O_CREAT);
-	write(fd, msg_get_reply->data, (msg_get_reply->header).data_size);
-	rest = (msg_get_reply->header).file_size - (msg_get_reply->header).data_size;
-	free_get_reply(msg_get_reply);
-
-	while(rest > 0) {
-		msg_get_reply = malloc(sizeof(MsgGETREPLY));
-		recv(client_socket, &header, sizeof(MsgHeader), 0);
-		recv_get_reply(client_socket, header, msg_get_reply);
-		write(fd, msg_get_reply->data, msg_get_reply->header.data_size);
-		rest = rest - (msg_get_reply->header).data_size;
-		free_get_reply(msg_get_reply);
-	}
-	printf("RECIVED SUCCESSFULLY\n");
-	free(msg_get_reply);
+	return;
 }
 
 void
-list(int client_socket) 
+client_reply_get(int client_socket)
 {
-	/* 변수 선언 */
-	MsgHeader header;
-	MsgLIST *msg_list;
+	int fd, i, curr_offset;
+	msg_meta_t *msg_meta;
+	msg_get_reply_t *msg_get_reply;
 
-	memset(&header, 0, sizeof(MsgHeader));
-	
-	header.msg_type = LIST;
-	header.owner_size = 0;
+	/* init msg meta & receive msg meta */
+	msg_meta_recv(client_socket, msg_meta);
 
-	msg_list = malloc(sizeof(MsgLIST));
-	msg_list->owner = (char *)malloc(sizeof(char) * header.owner_size);
-	
-	send(client_socket, &header, sizeof(MsgHeader), 0);
-	send(client_socket, msg_list->owner, msg_list->header.owner_size, 0);
-	
-	printf("owner size : %zu\n", msg_list->header.owner_size);
-
-	free(msg_list->owner);
-	free(msg_list);
-	printf("List Done\n");
-}
-
-void 
-reply_list(int client_socket)
-{
-	/* 변수 선언 */
-	MsgHeader header;
-	MsgLISTREPLY *msg_list_reply;
-
-	int rest;
-	
-	printf("Start to reply list\n");
-
-	msg_list_reply = malloc(sizeof(MsgLISTREPLY));
-	memset(&header, 0, sizeof(MsgHeader));
-	recv(client_socket, &header, sizeof(MsgHeader), 0);
-
-	recv_list_reply(client_socket, header, msg_list_reply);
-
-	rest = msg_list_reply->header.total_offset;
-
-	printf("=== List of files (Total : %d) ===\n", rest);
-
-	if(rest > 0) {
- 		printf("%d. %s\n", msg_list_reply->header.offset, msg_list_reply->file_name);
+	/* ready for write file */
+	if((fd = open(msg_meta->file_name, O_WRONLY | O_CREAT, S_IRWXU)) == -1) {
+		printf("[GET] Fail to open file. Try again.\n");
+		return;
 	}
 
-	free_list_reply(msg_list_reply);
-	rest = rest - 1;
+	/* start to write file */
+	for(i = 0; i++; i < msg_meta->total_offset) {
+		/* init & recv msg get reply */
+		msg_get_reply = (msg_get_reply_t *)malloc(sizeof(msg_get_reply_t));
+		msg_recv(client_socket, msg_get_reply, sizeof(msg_get_reply_t) - sizeof(char *), 0);
+		msg_get_reply->buff = (char *)malloc(sizeof(char) * msg_get_reply->buff_size);
+		msg_recv(client_socket, msg_get_reply->buff, sizeof(char) * msg_get_reply->buff_size, 0);
+		
+		/* write file */
+		curr_offset = msg_get_reply->curr_offset * MAX_BUFF_SIZE;
+		pwrite(fd, msg_get_reply->buff, msg_get_reply->buff_size * sizeof(char), curr_offset);
 
-	while(rest > 0) {
-		recv(client_socket, &header, sizeof(MsgHeader), 0);
-		recv_list_reply(client_socket, header, msg_list_reply);
-		printf("%d. %s\n", msg_list_reply->header.offset, msg_list_reply->file_name);
-		free_list_reply(msg_list_reply);
-		rest = rest - 1;
+		/* free msg get reply */
+		free(msg_get_reply->buff);
+		free(msg_get_reply);
 	}
-	free(msg_list_reply);
-	printf("=== End of files list ===\n");
+	/* free fd */
+	close(fd);
+
+	/* free msg meta */
+	msg_meta_free(msg_meta);
+
+	return;
 }
 
-/*
-uint32_t 
-get_file_size(char *file_name) 
+void
+client_list(int client_socket)
 {
-	struct stat st;
-	stat(file_name, &st);
-	uint32_t size = st.st_size;
-	return size;
+	msg_meta_t *msg_meta;
+	char user_name[MAX_USER_NAME_SIZE];
+
+	/* get user name */
+	getlogin_r(user_name, MAX_USER_NAME_SIZE);
+
+	/* init msg meta */
+	msg_meta = (msg_meta_t *)malloc(sizeof(msg_meta_t));
+	msg_meta->type = MSG_LIST;
+	msg_meta->owner_name_size = strlen(user_name);
+	msg_meta->file_name_size = 0;
+	
+	msg_meta->file_name = (char *)malloc(sizeof(char) * 0);
+	msg_meta->owner_name = (char *)malloc(sizeof(char) * strlen(user_name));
+
+	memcpy(msg_meta->owner_name, user_name, strlen(user_name));
+	
+	/* send msg meta */
+	msg_send(client_socket, msg_meta, sizeof(msg_meta_t) - sizeof(char *) * 2, 0);
+	msg_send(client_socket, msg_meta->owner_name, sizeof(char) * strlen(user_name), 0);
+
+	/* free msg meta */
+	msg_meta_free(msg_meta);
+
+	return;
 }
 
-int 
-cceil(double x) 
+void
+client_reply_list(int client_socket)
 {
-	if((x - (int) x) > 0.0) {
-		return (int)x + 1;
+	int file_num, i;
+	msg_meta_t *msg_meta;
+	msg_list_reply_t *msg_list_reply;
+
+	/* recv msg meta */
+	msg_meta_recv(client_socket, msg_meta);
+	
+	/* recv msg list reply */
+	file_num = msg_meta->total_offset;
+
+	printf("[ %s's files ]\n", msg_meta->owner_name);
+	for(i = 0; i < file_num; i++) {
+		/* init & recv msg list reply */
+		msg_list_reply = (msg_list_reply_t *)malloc(sizeof(msg_list_reply_t));
+		msg_recv(client_socket, msg_list_reply, sizeof(msg_list_reply_t) - sizeof(char *), 0);
+		
+		msg_list_reply->buff = (char *)malloc(sizeof(char) * msg_list_reply->buff_size);
+		msg_recv(client_socket, msg_list_reply, sizeof(char) * msg_list_reply->buff_size, 0);
+
+		/* print list */
+		printf("%2d. %s\n", i + 1, msg_list_reply->buff);
+
+		/* free msg list reply */
+		free(msg_list_reply->buff);
+		free(msg_list_reply);
 	}
-	return (int)x;
+	printf("[ End of List ]\n");
+
+	/* free msg meta */
+	msg_meta_free(msg_meta);
+	
+	return;
 }
-*/
